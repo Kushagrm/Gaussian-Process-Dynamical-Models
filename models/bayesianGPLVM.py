@@ -10,7 +10,7 @@ import numpy as np
 from copy import deepcopy
 import torch
 
-## Ask, shouldn't it be Y^T Y
+
 def _init_pca(Y, latent_dim):
     U, S, V = torch.pca_lowrank(Y, q = latent_dim)
     return torch.nn.Parameter(torch.matmul(Y, V[:,:latent_dim]))
