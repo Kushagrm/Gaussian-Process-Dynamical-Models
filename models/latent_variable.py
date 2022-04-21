@@ -45,7 +45,7 @@ class PointLatentVariable(LatentVariable):
     
     def reset(self, X_init_test):
         self.__init__(X_init_test)
-        
+                
 class MAPLatentVariable(LatentVariable):
     
     def __init__(self, X_init, prior_x):
@@ -267,19 +267,19 @@ class kl_gaussian_loss_term(AddedLossTerm):
         return (kl_per_point/self.data_dim)
 
 
-class PointNetEncoder(LatentVariable):
-    def __init__(self, n, data_dim, latent_dim, prior_x, inter_dim=5, h_dims=(5, 5), rho_dims=(5, 5)):
-        super().__init__(n, latent_dim)
+# class PointNetEncoder(LatentVariable):
+#     def __init__(self, n, data_dim, latent_dim, prior_x, inter_dim=5, h_dims=(5, 5), rho_dims=(5, 5)):
+#         super().__init__(n, latent_dim)
         
-        self.data_dim = data_dim
-        self.prior_x = prior_x
-        self.pointnet = PointNet(latent_dim, inter_dim, h_dims=h_dims, rho_dims=rho_dims,
-                 min_sigma=1e-6, init_sigma=None, nonlinearity=torch.tanh)
-        self.register_added_loss_term("x_kl")
+#         self.data_dim = data_dim
+#         self.prior_x = prior_x
+#         self.pointnet = PointNet(latent_dim, inter_dim, h_dims=h_dims, rho_dims=rho_dims,
+#                  min_sigma=1e-6, init_sigma=None, nonlinearity=torch.tanh)
+#         self.register_added_loss_term("x_kl")
 
-    def forward(self, Y):
-        q_x = self.pointnet(Y)
-        x_kl = kl_gaussian_loss_term(q_x, self.prior_x, self.n, self.data_dim)
-        self.update_added_loss_term('x_kl', x_kl)  # Update the KL term
-        return q_x.rsample()
+#     def forward(self, Y):
+#         q_x = self.pointnet(Y)
+#         x_kl = kl_gaussian_loss_term(q_x, self.prior_x, self.n, self.data_dim)
+#         self.update_added_loss_term('x_kl', x_kl)  # Update the KL term
+#         return q_x.rsample()
     
