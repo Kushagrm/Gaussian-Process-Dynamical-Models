@@ -147,7 +147,7 @@ class NNEncoder(LatentVariable):
         self.update_added_loss_term('x_kl', x_kl)
         return q_x.rsample()
 
-class VariationalLatentVariable(LatentVariable):
+class GaussianDiagLV(LatentVariable):
     
     def __init__(self, X_init, prior_x, data_dim):
         n, latent_dim = X_init.shape
@@ -189,28 +189,31 @@ class VariationalLatentVariable(LatentVariable):
     def reset(self, X_init_test, prior_x_test, data_dim):
         self.__init__(X_init_test, prior_x_test, data_dim)
         
-class VariationalDenseLatentVariable(LatentVariable):
+class GaussianDenseLV(LatentVariable):
+    
+    ## Correlate across latent dims q, independent across n
     
     def __init__(self, X_init, prior_x, data_dim):
         n, latent_dim = X_init.shape
         super().__init__(n, latent_dim)
         
         self.data_dim = data_dim
+        self.n = n
         self.prior_x = prior_x
         # G: there might be some issues here if someone calls .cuda() on their BayesianGPLVM
         # after initializing on the CPU
 
         # Local variational params per latent point with dimensionality latent_dim
-        self.q_mu = torch.nn.Parameter(X_init.cuda()) # (.cuda())
-        self.q_log_sigma = torch.nn.Parameter(torch.randn(n, latent_dim**2).cuda())    # .cuda()
+        self.q_mu = torch.nn.Parameter(X_init) # (.cuda())
+        self.q_log_sigma = torch.nn.Parameter(torch.randn(n, latent_dim**2))    # .cuda()
         
-        jitter = torch.eye(latent_dim).unsqueeze(0)*1e-5
+        self.jitter = torch.eye(latent_dim).unsqueeze(0)*1e-5
         
-        if torch.cuda.is_available():
-            
-            self.q_mu = self.q_mu.cuda()
-            self.q_log_sigma = self.q_log_sigma.cuda()
-            self.jitter = torch.cat([jitter for i in range(n)], axis=0).cuda()
+        #if torch.cuda.is_available():
+        #    
+        #    self.q_mu = self.q_mu.cuda()
+        #    self.q_log_sigma = self.q_log_sigma.cuda()
+        #    self.jitter = torch.cat([jitter for i in range(n)], axis=0).cuda()
         
         # This will add the KL divergence KL(q(X) || p(X)) to the loss
         self.register_added_loss_term("x_kl")
@@ -235,13 +238,67 @@ class VariationalDenseLatentVariable(LatentVariable):
         q_mu_batch = self.q_mu[batch_idx, ...]
         q_sigma_batch = self.q_sigma[batch_idx, ...]
 
-        q_x = torch.distributions.MultivariateNormal(q_mu_batch, q_sigma_batch)
+        self.q_x = torch.distributions.MultivariateNormal(q_mu_batch, q_sigma_batch)
 
         self.prior_x.loc = self.prior_x.loc[:len(batch_idx), ...]
         self.prior_x.scale = self.prior_x.covariance_matrix[:len(batch_idx), ...]
-        x_kl = kl_gaussian_loss_term(q_x, self.prior_x, len(batch_idx), self.data_dim)        
+        x_kl = kl_gaussian_loss_term(self.q_x, self.prior_x, len(batch_idx), self.data_dim)        
         self.update_added_loss_term('x_kl', x_kl)
-        return q_x.rsample()
+        return self.q_x.rsample()
+    
+    def reset(self, X_init_test, prior_x_test, data_dim):
+        self.__init__(X_init_test, prior_x_test, data_dim)
+        
+class GaussianProcessLV(LatentVariable):
+    
+    ## Correlate across latent n, independent across dims q
+    
+    def __init__(self, X_init, prior_x, data_dim):
+        latent_dim, n = X_init.shape
+        super().__init__(n, latent_dim)
+        
+        self.data_dim = data_dim
+        self.n = n
+        self.prior_x = prior_x
+
+        # Local variational params
+        
+        self.q_mu = torch.nn.Parameter(X_init) #
+        self.q_log_covar = torch.nn.Parameter(torch.randn(latent_dim, n, n))    # .cuda()
+        
+        self.jitter = torch.eye(n).unsqueeze(0)*1e-5
+        
+        #if torch.cuda.is_available():
+        #    
+        #    self.q_mu = self.q_mu.cuda()
+        #    self.q_log_sigma = self.q_log_sigma.cuda()
+        #    self.jitter = torch.cat([jitter for i in range(n)], axis=0).cuda()
+        
+        # This will add the KL divergence KL(q(X) || p(X)) to the loss
+        self.register_added_loss_term("x_kl")
+        
+        
+    def sigma(self):
+       sg = self.q_log_covar
+       sg = sg.reshape(self.latent_dim, self.n, self.n)
+       sg = torch.einsum('aij,akj->aik', sg, sg)
+       sg += self.jitter
+       return sg   
+
+    def forward(self):
+        
+        self.q_sigma = self.sigma()
+        
+        #if batch_idx is None:
+        #    batch_idx = np.arange(self.n) 
+        
+        self.q_x = torch.distributions.MultivariateNormal(self.q_mu, self.q_sigma)
+
+        self.prior_x.loc = self.prior_x.loc
+        self.prior_x.scale = self.prior_x.covariance_matrix
+        x_kl = kl_gaussian_loss_term(self.q_x, self.prior_x, self.n, self.data_dim)        
+        self.update_added_loss_term('x_kl', x_kl)
+        return self.q_x.rsample()
     
     def reset(self, X_init_test, prior_x_test, data_dim):
         self.__init__(X_init_test, prior_x_test, data_dim)
@@ -256,7 +313,6 @@ class kl_gaussian_loss_term(AddedLossTerm):
         
     def loss(self): 
         
-        # G 
         kl_per_latent_dim = kl_divergence(self.q_x, self.p_x).sum(axis=0) # vector of size latent_dim
         kl_per_point = kl_per_latent_dim.sum()/self.n # scalar
         # inside the forward method of variational ELBO, 
