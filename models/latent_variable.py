@@ -254,6 +254,7 @@ class GaussianProcessLV(LatentVariable):
     ## Correlate across latent n, independent across dims q
     
     def __init__(self, X_init, prior_x, data_dim):
+        
         latent_dim, n = X_init.shape
         super().__init__(n, latent_dim)
         
@@ -296,7 +297,7 @@ class GaussianProcessLV(LatentVariable):
 
         self.prior_x.loc = self.prior_x.loc
         self.prior_x.scale = self.prior_x.covariance_matrix
-        x_kl = kl_gaussian_loss_term(self.q_x, self.prior_x, self.n, self.data_dim)        
+        x_kl = kl_gaussian_loss_term(self.q_x, self.prior_x, len(self.q_mu.T), self.data_dim)        
         self.update_added_loss_term('x_kl', x_kl)
         return self.q_x.rsample()
     

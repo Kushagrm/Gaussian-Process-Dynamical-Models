@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 """
 
+Non-conjugate likelihood 
+
 """
 
 import numpy as np

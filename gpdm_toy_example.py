@@ -11,6 +11,7 @@ import matplotlib.pylab as plt
 from models.bayesianGPLVM import BayesianGPLVM
 from gpytorch.models import ApproximateGP
 from tqdm import trange
+from prettytable import PrettyTable
 from models.latent_variable import PointLatentVariable, MAPLatentVariable
 from models.latent_variable import GaussianDiagLV, GaussianProcessLV
 from gpytorch.means import ConstantMean, ZeroMean
@@ -26,17 +27,24 @@ from torch.utils.data import TensorDataset, DataLoader
 from   sklearn.datasets import make_s_curve
 
 
-class PointLatentVariable(gpytorch.Module):
-    def __init__(self, n, q):
-        super().__init__()
-        self.register_parameter('X', torch.nn.Parameter(torch.ones(n, q)))
+def get_trainable_param_names(self):
+      
+      ''' Prints a list of parameters (model + variational) which will be 
+      learnt in the process of optimising the objective '''
+      
+      table = PrettyTable(["Modules", "Parameters"])
+      total_params = 0
+      for name, parameter in self.named_parameters():
+          if not parameter.requires_grad: continue
+          param = parameter.numel()
+          table.add_row([name, param])
+          total_params+=param
+      print(table)
+      print(f"Total Trainable Params: {total_params}")
 
-    def forward(self):
-        return self.X
-
-class LatentDynamicModel(BayesianGPLVM):
-     def __init__(self, n, data_dim, latent_dim, n_inducing, X, nn_layers=None):
-         
+class LatentDynamicalModel(ApproximateGP):
+     def __init__(self, n, data_dim, latent_dim, n_inducing):
+        
         self.n = n
         self.batch_shape = torch.Size([data_dim])
         
@@ -47,7 +55,7 @@ class LatentDynamicModel(BayesianGPLVM):
         # Sparse Variational Formulation
         q_u = CholeskyVariationalDistribution(n_inducing, batch_shape=self.batch_shape) 
         q_f = VariationalStrategy(self, self.inducing_inputs, q_u, learn_inducing_locations=True)
-        super(LatentDynamicModel, self).__init__(X, q_f)
+        super(LatentDynamicalModel, self).__init__(q_f)
         
         # Kernel 
         #self.mean_module = ConstantMean(ard_num_dims=latent_dim)
@@ -104,36 +112,39 @@ if __name__ == '__main__':
     
     #latent_var = VariationalLatentVariable(X_init, prior_x, d)
     
-    model = LatentDynamicModel(n=200, data_dim=d, latent_dim=q, n_inducing=100, X=latent_var)
+    model = LatentDynamicalModel(n=200, data_dim=d, latent_dim=q, n_inducing=100)
     
     likelihood = GaussianLikelihood()
     elbo = VariationalELBO(likelihood, model, num_data=len(Y))
 
     optimizer = torch.optim.Adam([
-    {'params': model.parameters()},
-    {'params': likelihood.parameters()}
-    ], lr=0.01)
-
+      dict(params=model.parameters(), lr=0.01),
+      dict(params=likelihood.parameters(), lr=0.01),
+      dict(params=latent_var.parameters(), lr=0.01)
+  ])
     # Model params
-    model.get_trainable_param_names()
+    #model.get_trainable_param_names()
 
     loss_list = []
     #iterator = trange(steps_per_model[model_name], leave=True)
-    iterator = trange(2000)
+    iterator = trange(20000)
     batch_size = 100
     for i in iterator: 
         #batch_index = model._get_batch_idx(batch_size)
         optimizer.zero_grad()
         #sample = latent_var.X
-        sample = model.sample_latent_variable()  # a full sample returns latent x across all N
+        sample = latent_var.forward()  # a full sample returns latent x across all N
         #sample_batch = sample[batch_index]
         output_batch = model(sample.T)
         loss = -elbo(output_batch, Y.T).sum()
         loss_list.append(loss.item())
         iterator.set_description('Loss: ' + str(float(np.round(loss.item(),2))) + ", iter no: " + str(i))
+        if i % 100 == 0:
+            print(model.covar_module.base_kernel.lengthscale)
+            print(likelihood.noise_covar.noise)
         loss.backward()
         optimizer.step()
         
     ## Check latents
-    #plt.scatter(X[:,0], X[:,1])
-    #plt.scatter(latent_var.q_mu.detach()[:,0], latent_var.q_mu.detach()[:,1])
+    plt.scatter(X[:,0], X[:,1])
+    plt.scatter(latent_var.q_mu.detach()[:,0], latent_var.q_mu.detach()[:,1])
